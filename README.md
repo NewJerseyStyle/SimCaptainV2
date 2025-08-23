@@ -1,5 +1,7 @@
 # Real-Time Tactical Ship Simulation Game
 
+> 🔀 You are in `alt-main` branch. This is highly unstable. Feel free to edit the code to make it work in your favor
+
 ## About the Project
 The project is a "Real-Time Tactical Ship Simulation Game" that integrates Large Language Models (LLMs) to enable natural language interaction with ship's crew agents. Players act as commanders, issuing orders to officer agents (Weapons, Helm, Engineering) who then translate these commands into game actions. The simulation features ship management, movement, combat (guns, torpedoes), and dynamic crew interactions, including casualty handling and role reassignment. Enemy ships are controlled by an AI Commander.
 
@@ -42,4 +44,5 @@ To get started with the Real-Time Tactical Ship Simulation Game, follow these st
 To start the simulation, run the main Python script:
 ```bash
 python main.py
+
 ```
