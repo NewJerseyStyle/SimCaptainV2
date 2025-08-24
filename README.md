@@ -146,6 +146,7 @@ Issue commands using natural language in the format:
   - `ShipSpeedResist`: Physics calculations for movement
 - **Agents**: LLM-powered officers for natural language command processing
 - **LiteLLM Integration**: Universal interface supporting 100+ AI providers
+- **Communication**: Channel system for crew coordination
 
 ### File Structure
 ```
@@ -203,4 +204,8 @@ Enable detailed LLM logging:
 LLM_DEBUG="true"
 ```
 
-The game uses Python's logging system for detailed information about ship operations, officer decisions, and combat events.
+The game uses Python's logging system for detailed information about ship operations, officer decisions, and combat events. Check console output for detailed information about:
+- Ship movements and speed changes
+- Weapon firing and reload states
+- Officer command processing
+- Damage and casualty events
