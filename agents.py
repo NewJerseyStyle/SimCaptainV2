@@ -1,10 +1,11 @@
 import abc
 import os
-import fastapi_poe as fp
-from fastapi_poe.types import ProtocolMessage
 import json
 import re
+import sys
 from json_repair import repair_json
+from litellm import completion
+import litellm
 
 class Agent(abc.ABC):
     """
@@ -43,18 +44,84 @@ class CommanderAgent(Agent):
         """Adds an officer agent to the commander's delegation list."""
         self.officer_agents[officer_name] = officer_agent
 
+def test_llm_connection(model: str) -> bool:
+    """
+    Test connection to the LLM provider before initializing agents.
+    Returns True if connection successful, False otherwise.
+    """
+    print(f"Testing connection to LLM model: {model}")
+    
+    try:
+        # Configure API keys and base URLs for different providers
+        if "gpt" in model or "openai" in model:
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                print("ERROR: OPENAI_API_KEY environment variable not set for OpenAI models.")
+                return False
+        elif "claude" in model or "anthropic" in model:
+            api_key = os.getenv("ANTHROPIC_API_KEY")
+            if not api_key:
+                print("ERROR: ANTHROPIC_API_KEY environment variable not set for Anthropic models.")
+                return False
+        elif "ollama" in model:
+            # For local Ollama models, set the base URL
+            base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+            litellm.api_base = base_url
+        
+        # Test with a minimal request
+        test_messages = [
+            {"role": "system", "content": "You are a test assistant."},
+            {"role": "user", "content": "Respond with just 'OK'"}
+        ]
+        
+        response = completion(
+            model=model,
+            messages=test_messages,
+            temperature=0,
+            max_tokens=10
+        )
+        
+        if response and response.choices:
+            print(f"✓ LLM connection test successful for model: {model}")
+            return True
+        else:
+            print(f"✗ LLM connection test failed - no response from model: {model}")
+            return False
+            
+    except Exception as e:
+        print(f"✗ LLM connection test failed for model {model}: {e}")
+        return False
+
 class OfficerAgent(Agent, abc.ABC):
     """
     A base class for different officer roles (e.g., Weapons, Helm, Engineering).
     Responsible for receiving commands, preparing prompts, interacting with LLM,
     and parsing responses.
     """
-    def __init__(self, bot_name: str, prompt_path: str):
+    def __init__(self, bot_name: str, prompt_path: str, model: str = None):
         self.bot_name = bot_name
         self.prompt_path = prompt_path
-        self.poe_api_key = os.getenv("POE_API_KEY")
-        if not self.poe_api_key:
-            raise ValueError("POE_API_KEY environment variable not set.")
+        
+        # Configure LLM provider and model
+        self.model = model or os.getenv("LLM_MODEL", "gpt-3.5-turbo")
+        
+        # Set up litellm configuration
+        litellm.set_verbose = os.getenv("LLM_DEBUG", "false").lower() == "true"
+        
+        # Configure API keys for different providers
+        if "gpt" in self.model or "openai" in self.model:
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                raise ValueError("OPENAI_API_KEY environment variable not set for OpenAI models.")
+        elif "claude" in self.model or "anthropic" in self.model:
+            api_key = os.getenv("ANTHROPIC_API_KEY")
+            if not api_key:
+                raise ValueError("ANTHROPIC_API_KEY environment variable not set for Anthropic models.")
+        elif "ollama" in self.model:
+            # For local Ollama models, set the base URL
+            base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+            litellm.api_base = base_url
+        # Add more provider configurations as needed
 
     def _prepare_prompt(self, commander_order: str, game_state: dict) -> str:
         """
@@ -71,25 +138,29 @@ class OfficerAgent(Agent, abc.ABC):
 
     def _call_llm(self, prompt: str) -> dict:
         """
-        Calls the LLM and gets a JSON response using fastapi_poe.
+        Calls the LLM and gets a JSON response using litellm.
         """
-        if not self.poe_api_key:
-            raise ValueError("Poe API key is not set. Cannot call LLM.")
-
-        print(f"Calling LLM for {self.bot_name} with prompt: {prompt[:100]}...")
-        messages = [ProtocolMessage(role="user", content=prompt)]
-        full_response_content = ""
+        print(f"Calling LLM ({self.model}) for {self.bot_name} with prompt: {prompt[:100]}...")
+        
+        messages = [
+            {"role": "system", "content": f"You are {self.bot_name}, a naval officer. Always respond with valid JSON as specified in the prompt."},
+            {"role": "user", "content": prompt}
+        ]
+        
         try:
-            for partial_response in fp.get_bot_response_sync(
+            response = completion(
+                model=self.model,
                 messages=messages,
-                bot_name=self.bot_name,
-                api_key=self.poe_api_key,
-            ):
-                full_response_content += partial_response.text
+                temperature=0.7,
+                max_tokens=1024
+            )
+            
+            full_response_content = response.choices[0].message.content
+            print(f"LLM Response for {self.bot_name}: {full_response_content[:200]}...")
             return {"action": "llm_response", "parameters": {"response": full_response_content}}
+            
         except Exception as e:
-            print(f"Error calling Poe LLM for {self.bot_name}: {e}")
-            # Return a default error response or re-raise the exception
+            print(f"Error calling LLM ({self.model}) for {self.bot_name}: {e}")
             return {"action": "error", "parameters": {"message": str(e)}}
 
     def _parse_llm_response(self, response: dict):
@@ -166,21 +237,21 @@ class WeaponsOfficerAgent(OfficerAgent):
     Concrete implementation for the Weapons Officer.
     Manages the ship's offensive arsenal.
     """
-    def __init__(self):
-        super().__init__(bot_name="WeaponsOfficer", prompt_path="prompts/weapons_officer_prompt.txt")
+    def __init__(self, model: str = None):
+        super().__init__(bot_name="WeaponsOfficer", prompt_path="prompts/weapons_officer_prompt.txt", model=model)
 
 class HelmOfficerAgent(OfficerAgent):
     """
     Concrete implementation for the Helm Officer.
     Controls the ship's movement and navigation.
     """
-    def __init__(self):
-        super().__init__(bot_name="HelmOfficer", prompt_path="prompts/helm_officer_prompt.txt")
+    def __init__(self, model: str = None):
+        super().__init__(bot_name="HelmOfficer", prompt_path="prompts/helm_officer_prompt.txt", model=model)
 
 class EngineeringOfficerAgent(OfficerAgent):
     """
     Concrete implementation for the Engineering Officer.
     Manages the ship's propulsion and power systems.
     """
-    def __init__(self):
-        super().__init__(bot_name="EngineeringOfficer", prompt_path="prompts/engineering_officer_prompt.txt")
+    def __init__(self, model: str = None):
+        super().__init__(bot_name="EngineeringOfficer", prompt_path="prompts/engineering_officer_prompt.txt", model=model)

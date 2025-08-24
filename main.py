@@ -1,4 +1,5 @@
 import time
+import sys
 from world import World
 from ship import Ship
 
@@ -11,7 +12,7 @@ import os
 from dotenv import load_dotenv
 from world import World
 from ship import Ship
-from agents import WeaponsOfficerAgent, HelmOfficerAgent, EngineeringOfficerAgent, CommanderAgent, OfficerAgent
+from agents import WeaponsOfficerAgent, HelmOfficerAgent, EngineeringOfficerAgent, CommanderAgent, OfficerAgent, test_llm_connection
 
 load_dotenv() # Load environment variables from .env file
 
@@ -71,6 +72,23 @@ def calculate_bearing(point_a: Point, point_b: Point) -> float:
     return compass_bearing
 
 def main():
+    # Get LLM model configuration
+    llm_model = os.getenv("LLM_MODEL", "gpt-3.5-turbo")
+    
+    # Test LLM connection before starting the game
+    print("=== Naval Simulation Starting ===")
+    if not test_llm_connection(llm_model):
+        print("\n❌ CRITICAL ERROR: Cannot connect to LLM provider!")
+        print("Please check:")
+        print("1. Ollama is running (ollama serve) if using Ollama models")
+        print("2. API keys are set if using cloud providers")
+        print("3. Network connectivity")
+        print("4. Model is available (e.g., 'ollama pull llama3.2:1b')")
+        print("\nExiting...")
+        sys.exit(1)
+    
+    print("✅ LLM connection verified. Starting game...\n")
+    
     world = World()
 
     # Initialize ships
@@ -79,11 +97,11 @@ def main():
 
     world.add_object(fubuki)
     world.add_object(enemy_ship)
-
+    
     # Instantiate player's officer agents
-    weapons_officer = WeaponsOfficerAgent()
-    helm_officer = HelmOfficerAgent()
-    engineering_officer = EngineeringOfficerAgent()
+    weapons_officer = WeaponsOfficerAgent(model=llm_model)
+    helm_officer = HelmOfficerAgent(model=llm_model)
+    engineering_officer = EngineeringOfficerAgent(model=llm_model)
 
     # Instantiate AI Commander for the enemy ship
     ai_commander = OfficerAgent(bot_name="AICommander", prompt_path="prompts/ai_commander_prompt.txt")
@@ -125,6 +143,9 @@ def main():
 
         # Player Input (Natural Language Command)
         player_command_input = input("\nCommander, what are your orders? ").strip()
+        
+        # Flag to skip AI turn for non-action commands
+        skip_ai_turn = False
 
         if player_command_input.lower() == 'exit':
             running = False
@@ -138,6 +159,7 @@ def main():
             print("  'engineering, increase speed to 20 knots'")
             print("  'weapons, fire guns at enemy destroyer'")
             print("  'weapons, launch torpedoes at target 1234'")
+            skip_ai_turn = True  # Don't run AI turn for help command
 
         elif player_command_input:
             parts = player_command_input.split(',', 1)
@@ -197,37 +219,38 @@ def main():
                 else:
                     print("Invalid command format. Expected: 'officer, natural language command'. Type 'help' for more info.")
 
-        # AI Commander's turn
-        print(f"\nAI Commander ({enemy_ship.name}) is processing its turn...")
-        ai_order_json = ai_commander.process_command("Formulate a strategic plan based on the current situation.", game_state_str)
-        
-        if ai_order_json and isinstance(ai_order_json, dict):
-            ai_recipient = ai_order_json.get("recipient")
-            ai_order_text = ai_order_json.get("order")
+        # AI Commander's turn (only if player didn't use help or other non-action commands)
+        if not skip_ai_turn:
+            print(f"\nAI Commander ({enemy_ship.name}) is processing its turn...")
+            ai_order_json = ai_commander.process_command("Formulate a strategic plan based on the current situation.", game_state_str)
+            
+            if ai_order_json and isinstance(ai_order_json, dict):
+                ai_recipient = ai_order_json.get("recipient")
+                ai_order_text = ai_order_json.get("order")
 
-            if ai_recipient and ai_order_text:
-                ai_officer_agent = None
-                if "WeaponsOfficer" in ai_recipient:
-                    ai_officer_agent = WeaponsOfficerAgent() # Re-instantiate for simplicity, in a real game these would be persistent
-                elif "HelmOfficer" in ai_recipient:
-                    ai_officer_agent = HelmOfficerAgent()
-                elif "EngineeringOfficer" in ai_recipient:
-                    ai_officer_agent = EngineeringOfficerAgent()
-                
-                if ai_officer_agent:
-                    print(f"AI Commander sending order to {ai_officer_agent.bot_name}: '{ai_order_text}'")
-                    ai_action, ai_params = ai_officer_agent.process_command(ai_order_text, game_state_str)
-                    if ai_action:
-                        enemy_ship.command_queue.append({"action": ai_action, "parameters": ai_params if ai_params is not None else {}})
-                        print(f"AI Command '{ai_action}' with params {ai_params} added to {enemy_ship.name}'s queue.")
+                if ai_recipient and ai_order_text:
+                    ai_officer_agent = None
+                    if "WeaponsOfficer" in ai_recipient:
+                        ai_officer_agent = WeaponsOfficerAgent(model=llm_model) # Re-instantiate for simplicity, in a real game these would be persistent
+                    elif "HelmOfficer" in ai_recipient:
+                        ai_officer_agent = HelmOfficerAgent(model=llm_model)
+                    elif "EngineeringOfficer" in ai_recipient:
+                        ai_officer_agent = EngineeringOfficerAgent(model=llm_model)
+                    
+                    if ai_officer_agent:
+                        print(f"AI Commander sending order to {ai_officer_agent.bot_name}: '{ai_order_text}'")
+                        ai_action, ai_params = ai_officer_agent.process_command(ai_order_text, game_state_str)
+                        if ai_action:
+                            enemy_ship.command_queue.append({"action": ai_action, "parameters": ai_params if ai_params is not None else {}})
+                            print(f"AI Command '{ai_action}' with params {ai_params} added to {enemy_ship.name}'s queue.")
+                        else:
+                            print(f"AI Officer {ai_officer_agent.bot_name} did not return a valid command.")
                     else:
-                        print(f"AI Officer {ai_officer_agent.bot_name} did not return a valid command.")
+                        print(f"AI Commander specified unknown officer: {ai_recipient}")
                 else:
-                    print(f"AI Commander specified unknown officer: {ai_recipient}")
+                    print("AI Commander did not return a valid recipient or order.")
             else:
-                print("AI Commander did not return a valid recipient or order.")
-        else:
-            print("AI Commander did not return a valid JSON order.")
+                print("AI Commander did not return a valid JSON order.")
 
 
         # Break condition: game duration or a ship is destroyed
