@@ -1,4 +1,7 @@
 geopy==2.3.0
 python-dotenv==1.0.0
-fastapi-poe==0.0.36
 json-repair==0.20.0
+litellm==1.50.0
+numpy==1.24.3
+scipy==1.11.4
+matplotlib==3.7.2
